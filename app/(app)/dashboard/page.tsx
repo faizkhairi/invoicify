@@ -10,13 +10,14 @@ export default async function DashboardPage() {
   const session = await auth()
   const userId = session!.user!.id!
 
-  const [summary, recentInvoices] = await Promise.all([
-    fetch(`${process.env.NEXTAUTH_URL}/api/dashboard/summary`, {
-      headers: { Cookie: "" },
-      cache: "no-store",
-    })
-      .then((r) => r.json())
-      .catch(() => ({ totalInvoiced: 0, totalCollected: 0, outstanding: 0, overdue: 0 })),
+  const now = new Date()
+  const startOfYear = new Date(now.getFullYear(), 0, 1)
+
+  const [invoices, recentInvoices] = await Promise.all([
+    db.invoice.findMany({
+      where: { userId, status: { not: "VOID" }, issueDate: { gte: startOfYear } },
+      include: { payments: { select: { amount: true } } },
+    }),
     db.invoice.findMany({
       where: { userId, status: { not: "VOID" } },
       include: { client: { select: { name: true } } },
@@ -25,7 +26,21 @@ export default async function DashboardPage() {
     }),
   ])
 
-  const statusColor: Record<string, string> = {
+  // Compute summary directly from DB results — no HTTP self-call needed
+  let totalInvoiced = 0, totalCollected = 0, outstanding = 0, overdue = 0
+  for (const inv of invoices) {
+    totalInvoiced += inv.totalAmount
+    const paid = inv.payments.reduce((s, p) => s + p.amount, 0)
+    totalCollected += paid
+    const balance = Math.max(0, inv.totalAmount - paid)
+    if (inv.status === "PAID") continue
+    const isOverdue = (inv.status === "SENT" || inv.status === "PARTIAL") && new Date(inv.dueDate) < now
+    if (isOverdue) overdue += balance
+    else outstanding += balance
+  }
+  const summary = { totalInvoiced, totalCollected, outstanding, overdue }
+
+  const statusColor: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
     DRAFT: "secondary",
     SENT: "default",
     PARTIAL: "outline",
@@ -92,7 +107,7 @@ export default async function DashboardPage() {
                     <span className="ml-2 text-muted-foreground">{inv.client.name}</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <Badge variant={statusColor[inv.status] as never}>{inv.status}</Badge>
+                    <Badge variant={statusColor[inv.status] ?? "secondary"}>{inv.status}</Badge>
                     <span className="font-medium">{formatCurrency(inv.totalAmount, inv.currency)}</span>
                     <span className="text-muted-foreground">
                       {format(new Date(inv.dueDate), "d MMM yyyy")}

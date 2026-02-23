@@ -46,7 +46,7 @@ export async function PATCH(req: Request, { params }: Params) {
   }
 
   const client = await db.client.update({
-    where: { id: clientId },
+    where: { id: clientId, userId: session.user.id },
     data: parsed.data,
   })
 
@@ -65,7 +65,7 @@ export async function DELETE(_req: Request, { params }: Params) {
   if (!existing) return NextResponse.json({ error: "Client not found" }, { status: 404 })
 
   await db.client.update({
-    where: { id: clientId },
+    where: { id: clientId, userId: session.user.id },
     data: { deletedAt: new Date() },
   })
 

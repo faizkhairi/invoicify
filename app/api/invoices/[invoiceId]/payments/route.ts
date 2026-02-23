@@ -16,7 +16,12 @@ export async function POST(req: Request, { params }: Params) {
     include: { payments: true },
   })
   if (!invoice) return NextResponse.json({ error: "Invoice not found" }, { status: 404 })
-  if (invoice.status === "PAID" || invoice.status === "VOID" || invoice.status === "CANCELLED") {
+  if (
+    invoice.status === "DRAFT" ||
+    invoice.status === "PAID" ||
+    invoice.status === "VOID" ||
+    invoice.status === "CANCELLED"
+  ) {
     return NextResponse.json({ error: "Cannot add payment to this invoice" }, { status: 422 })
   }
 

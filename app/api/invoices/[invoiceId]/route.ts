@@ -33,8 +33,8 @@ export async function PATCH(req: Request, { params }: Params) {
     where: { id: invoiceId, userId: session.user.id },
   })
   if (!invoice) return NextResponse.json({ error: "Invoice not found" }, { status: 404 })
-  if (invoice.status === "PAID" || invoice.status === "VOID") {
-    return NextResponse.json({ error: "Cannot edit a paid or voided invoice" }, { status: 422 })
+  if (invoice.status === "PAID" || invoice.status === "VOID" || invoice.status === "CANCELLED") {
+    return NextResponse.json({ error: "Cannot edit a paid, voided, or cancelled invoice" }, { status: 422 })
   }
 
   const body = await req.json()

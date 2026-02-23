@@ -10,14 +10,19 @@ export async function GET(req: Request) {
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
-  const status = searchParams.get("status")
+  const statusParam = searchParams.get("status")
   const clientId = searchParams.get("clientId")
+
+  const VALID_STATUSES = ["DRAFT", "SENT", "VIEWED", "PARTIAL", "PAID", "OVERDUE", "CANCELLED", "VOID"] as const
+  type InvoiceStatus = (typeof VALID_STATUSES)[number]
+  const status = VALID_STATUSES.includes(statusParam as InvoiceStatus)
+    ? (statusParam as InvoiceStatus)
+    : null
 
   const invoices = await db.invoice.findMany({
     where: {
       userId: session.user.id,
-      status: { not: "VOID" },
-      ...(status && { status: status as never }),
+      status: status ? status : { not: "VOID" },
       ...(clientId && { clientId }),
     },
     include: {
