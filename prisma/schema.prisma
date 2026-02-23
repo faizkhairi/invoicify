@@ -1,0 +1,207 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // url deliberately omitted — lives in prisma/config.ts (Prisma 7 pattern)
+}
+
+// ─── Auth (NextAuth v5 + PrismaAdapter) ──────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  password      String?   // bcrypt hash — null for OAuth users
+
+  // Malaysian business profile (printed on every invoice)
+  businessName  String?
+  businessRegNo String?   // SSM registration number
+  address       String?   @db.Text
+  phone         String?
+  logoUrl       String?   // Vercel Blob URL
+  taxId         String?   // SST registration number
+  taxRate       Int       @default(0)   // percentage × 100 (e.g. 900 = 9.00%)
+  currency      String    @default("MYR")
+  paymentTerms  String?   // default text shown on new invoices
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+  clients  Client[]
+  invoices Invoice[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Clients ──────────────────────────────────────────────────────────────────
+
+model Client {
+  id        String    @id @default(cuid())
+  userId    String
+  name      String
+  email     String
+  phone     String?
+  company   String?
+  address   String?   @db.Text
+  regNo     String?   // Client's SSM number
+  currency  String    @default("MYR")
+  notes     String?   @db.Text
+  deletedAt DateTime? // soft delete — null = active
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  invoices Invoice[]
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Raw index only (not unique) — partial unique index applied via raw migration:
+  // CREATE UNIQUE INDEX clients_user_email_unique ON "Client" (user_id, email) WHERE deleted_at IS NULL
+  // This prevents "alice@co.com" blocking re-creation after archival.
+  @@index([userId, email])
+}
+
+// ─── Invoices ─────────────────────────────────────────────────────────────────
+
+model Invoice {
+  id            String        @id @default(cuid())
+  userId        String
+  clientId      String
+  invoiceNumber String        // "INV-2026-001" — unique per user, server-generated
+  status        InvoiceStatus @default(DRAFT)
+  currency      String        @default("MYR")
+
+  issueDate DateTime  @default(now())
+  dueDate   DateTime
+
+  // All amounts in minor units (sen). NEVER floats.
+  subtotalAmount Int @default(0)
+  taxRate        Int @default(0)  // snapshot of user taxRate at creation time
+  taxAmount      Int @default(0)
+  discountAmount Int @default(0)
+  totalAmount    Int @default(0)
+
+  notes String? @db.Text
+  terms String? @db.Text // payment terms text
+
+  // PDF cache — avoid regenerating on every /pdf request
+  pdfUrl         String?
+  pdfGeneratedAt DateTime?
+
+  sentAt DateTime? // when last emailed
+  sentTo String?   // email address it was sent to
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items    InvoiceItem[]
+  payments Payment[]
+  user     User          @relation(fields: [userId], references: [id])
+  client   Client        @relation(fields: [clientId], references: [id])
+
+  @@unique([userId, invoiceNumber])
+  @@index([userId, status])
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Int     // units × 100 (e.g. 2.5 hrs = 250)
+  unitPrice   Int     // minor units
+  amount      Int     // quantity × unitPrice / 100
+  sortOrder   Int     @default(0)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+// Sequential invoice number counter — race-condition-safe alternative to MAX+1
+model InvoiceCounter {
+  userId    String
+  year      Int
+  nextValue Int    @default(1)
+
+  @@id([userId, year])
+  @@map("invoice_counters")
+}
+
+// ─── Payments ─────────────────────────────────────────────────────────────────
+
+// Payment records are immutable — never DELETE.
+// Use a reversal row (negative amount + reversalOf link) to correct mistakes.
+model Payment {
+  id        String        @id @default(cuid())
+  invoiceId String
+  amount    Int           // positive = payment, negative = reversal
+  method    PaymentMethod
+  reference String?       // cheque number, transfer ref, etc.
+  notes     String?
+  paidAt    DateTime
+  reversalOf String?      // links a reversal row to the original payment ID
+
+  createdAt DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  VIEWED
+  PARTIAL
+  PAID
+  OVERDUE
+  CANCELLED
+  VOID
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  CASH
+  CHEQUE
+  ONLINE
+  CREDIT_CARD
+  FPAY
+  DUITNOW
+}
