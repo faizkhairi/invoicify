@@ -128,3 +128,7 @@ npm run dev                # http://localhost:3000
 and the per-user authorization scoping on the invoice and client API routes
 (mocking `auth()` and the Prisma client to assert the `where` clause is
 scoped to the session user and that a foreign id returns 404).
+
+## License
+
+MIT
